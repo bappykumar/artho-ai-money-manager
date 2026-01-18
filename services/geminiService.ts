@@ -2,7 +2,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, AIResponse, SpendingInsight } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+// Always initialize directly as per instructions
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 const EXTRACTION_PROMPT = `
 You are a financial AI agent. Your task is to extract transaction details from the user's natural language input (Bangla or English).
@@ -24,6 +25,11 @@ IMPORTANT: Return valid JSON.
 `;
 
 export const extractTransaction = async (input: string): Promise<AIResponse | null> => {
+  if (!process.env.API_KEY) {
+    console.error("Gemini API Key is missing in process.env");
+    return null;
+  }
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -49,8 +55,7 @@ export const extractTransaction = async (input: string): Promise<AIResponse | nu
 
     const text = response.text;
     if (!text) return null;
-    const result = JSON.parse(text.trim());
-    return result;
+    return JSON.parse(text.trim());
   } catch (error) {
     console.error("Gemini Extraction Error:", error);
     return null;
@@ -58,7 +63,7 @@ export const extractTransaction = async (input: string): Promise<AIResponse | nu
 };
 
 export const generateInsights = async (transactions: Transaction[]): Promise<SpendingInsight[]> => {
-  if (transactions.length === 0) return [];
+  if (transactions.length === 0 || !process.env.API_KEY) return [];
 
   const historyStr = transactions.slice(-30).map(t => 
     `${t.date}: ${t.type} of ${t.amount} from ${t.source} for ${t.category} (${t.note})`
