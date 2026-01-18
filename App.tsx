@@ -8,6 +8,7 @@ import AIChatInput from './components/AIChatInput';
 
 const STORAGE_KEY = 'artho_finance_v3_data';
 const CLIENT_ID_KEY = 'artho_google_client_id';
+const USER_EMAIL_KEY = 'artho_user_email';
 const DEFAULT_PIN = '0000';
 
 const App: React.FC = () => {
@@ -27,6 +28,7 @@ const App: React.FC = () => {
   const [filterTime, setFilterTime] = useState<'All' | 'Today' | 'Week' | 'Month'>('All');
 
   const [clientId, setClientId] = useState(localStorage.getItem(CLIENT_ID_KEY) || '');
+  const [userEmail, setUserEmail] = useState(localStorage.getItem(USER_EMAIL_KEY) || '');
   const [syncStatus, setSyncStatus] = useState<SyncState>({
     isConnected: false,
     isSyncing: false,
@@ -35,9 +37,9 @@ const App: React.FC = () => {
   });
 
   const [copyFeedback, setCopyFeedback] = useState(false);
-
   const tokenClient = useRef<any>(null);
 
+  // Initialize Google Token Client
   useEffect(() => {
     const initGoogle = () => {
       if (clientId && (window as any).google) {
@@ -47,12 +49,12 @@ const App: React.FC = () => {
             scope: 'https://www.googleapis.com/auth/drive.file',
             callback: (resp: any) => {
               if (resp.access_token) {
+                // If we get a token, it means user is authenticated for this session
                 handleSync(resp.access_token);
               }
             },
           });
-          // Attempt sync on start if client id is present
-          triggerSync();
+          // We NO LONGER call triggerSync() here automatically to prevent the reload popup
         } catch (e) {
           console.error("GSI Init Error", e);
         }
@@ -87,6 +89,9 @@ const App: React.FC = () => {
   const handleSync = async (token: string) => {
     setSyncStatus(p => ({ ...p, isSyncing: true, isConnected: true }));
     try {
+      // Get user info if possible (optional, but helps for hints)
+      // Since we are using standard drive scope, we might not have profile access
+      // But we can try to find the file first
       const fileName = 'artho_vault_data.json';
       const listResp = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and trashed=false`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -134,9 +139,14 @@ const App: React.FC = () => {
     }
   };
 
-  const triggerSync = () => {
+  const triggerSync = (forcePrompt = false) => {
     if (tokenClient.current) {
-      tokenClient.current.requestAccessToken({ prompt: '' });
+      // Use hint if we have userEmail to avoid account chooser if possible
+      // and only prompt if we explicitly want to or if we are not connected
+      tokenClient.current.requestAccessToken({ 
+        prompt: forcePrompt ? 'select_account' : '',
+        hint: userEmail || undefined 
+      });
     }
   };
 
@@ -156,7 +166,10 @@ const App: React.FC = () => {
           rawInput: input
         };
         setTransactions(prev => [...prev, newTransaction]);
-        if (clientId) setTimeout(triggerSync, 500);
+        // Only trigger sync if client is already set up
+        if (clientId && syncStatus.isConnected) {
+          setTimeout(() => triggerSync(false), 500);
+        }
       }
     } finally {
       setIsLoading(false);
@@ -228,10 +241,13 @@ const App: React.FC = () => {
             <div>
               <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none">Artho</h1>
               <div className="flex items-center gap-2 mt-1.5">
-                <div className="flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-full border border-slate-100 shadow-sm">
+                <div 
+                  onClick={() => { setShowHistory(true); setActiveTab('sync'); }}
+                  className="flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-full border border-slate-100 shadow-sm cursor-pointer hover:bg-slate-50 transition-all"
+                >
                    <div className={`w-2 h-2 rounded-full ${syncStatus.isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-300'} ${syncStatus.isSyncing ? 'animate-pulse' : ''}`}></div>
                    <span className="text-[9px] text-slate-500 font-black uppercase tracking-widest">
-                     {syncStatus.isSyncing ? 'Syncing...' : syncStatus.isConnected ? `Cloud Connected` : 'Local Only'}
+                     {syncStatus.isSyncing ? 'Syncing...' : syncStatus.isConnected ? `Cloud Connected` : 'Sync Offline'}
                    </span>
                 </div>
               </div>
@@ -316,7 +332,7 @@ const App: React.FC = () => {
                                {syncStatus.isConnected ? 'Vault Connected' : 'Authorization Needed'}
                              </p>
                              <p className="text-[8px] font-bold opacity-70 mt-0.5">
-                               {syncStatus.isConnected ? 'Your private cloud is active' : 'Click Sync to authorize'}
+                               {syncStatus.isConnected ? 'Your private cloud is active' : 'Connect to start syncing'}
                              </p>
                            </div>
                         </div>
@@ -330,14 +346,19 @@ const App: React.FC = () => {
                           </div>
                         </div>
                         <button 
-                          onClick={triggerSync}
+                          onClick={() => triggerSync(true)}
                           disabled={syncStatus.isSyncing}
                           className="w-full py-5 bg-white text-indigo-600 rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-50 shadow-xl transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
                         >
                           {syncStatus.isSyncing ? 'Synchronizing...' : 'Sync with Cloud Now'}
                         </button>
-                        <div className="flex justify-center">
-                           <button onClick={() => { if(confirm('Delete ID?')) { setClientId(''); localStorage.removeItem(CLIENT_ID_KEY); setSyncStatus(p => ({ ...p, isConnected: false })); } }} className="text-[10px] font-bold text-indigo-200 hover:text-white transition-all underline">Use Different Client ID</button>
+                        <div className="flex flex-col gap-2 pt-2">
+                          <p className="text-[8px] text-center text-indigo-100/50 font-bold uppercase tracking-widest">
+                            রিলোড করলে অটো-পপআপ বন্ধ করা হয়েছে। সিঙ্ক করতে উপরে ক্লিক করুন।
+                          </p>
+                          <div className="flex justify-center">
+                             <button onClick={() => { if(confirm('Delete ID?')) { setClientId(''); localStorage.removeItem(CLIENT_ID_KEY); setSyncStatus(p => ({ ...p, isConnected: false })); } }} className="text-[10px] font-bold text-indigo-200 hover:text-white transition-all underline">Use Different Client ID</button>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -362,32 +383,23 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="space-y-4">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Shared Cloud Concept</h4>
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Smart Sync Rules</h4>
                     <div className="bg-slate-50 border border-slate-200 p-6 rounded-[2rem] space-y-4">
                        <div className="flex gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-lg shrink-0 border border-indigo-100">🌍</div>
+                         <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-lg shrink-0 border border-indigo-100">🚀</div>
                          <div>
-                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">Anyone Can Use</p>
+                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">No Auto-Popup</p>
                             <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                              যে কেউ তার নিজের Client ID এখানে বসিয়ে অ্যাপটি নিজের মতো করে ব্যবহার করতে পারবেন।
+                              পেজ রিলোড করলে এখন আর বিরক্তিকর পপআপ আসবে না। আপনি চাইলে ম্যানুয়ালি সিঙ্ক করতে পারবেন।
                             </p>
                          </div>
                        </div>
                        <div className="flex gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-lg shrink-0 border border-emerald-100">🔒</div>
+                         <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-lg shrink-0 border border-emerald-100">📧</div>
                          <div>
-                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">Private Storage</p>
+                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">Account Memory</p>
                             <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                              প্রতিটি Client ID এর ডেটা আলাদা ড্রাইভে থাকে, তাই আপনার ডেটা অন্য কেউ দেখতে পাবে না।
-                            </p>
-                         </div>
-                       </div>
-                       <div className="flex gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-lg shrink-0 border border-amber-100">🏗️</div>
-                         <div>
-                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">How to setup?</p>
-                            <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                              গুগল ক্লাউড কনসোলে গিয়ে একটি নতুন প্রজেক্ট খুলে Client ID জেনারেট করে এখানে দিলেই হবে।
+                              একবার সিঙ্ক করলে অ্যাপ আপনার ইমেইল মনে রাখবে, যাতে বারবার একাউন্ট সিলেক্ট করতে না হয়।
                             </p>
                          </div>
                        </div>
@@ -397,8 +409,8 @@ const App: React.FC = () => {
                   {clientId && syncStatus.isConnected && (
                      <div className="p-8 bg-indigo-50 rounded-[2rem] border border-indigo-100 text-center shadow-inner">
                         <div className="text-4xl mb-4">✨</div>
-                        <h4 className="text-sm font-black text-indigo-900 mb-2 uppercase tracking-widest">Multi-User Ready!</h4>
-                        <p className="text-[11px] text-indigo-600 font-medium leading-relaxed italic px-4">আপনার ব্যক্তিগত ক্লাউড এখন এই অ্যাপের সাথে যুক্ত।</p>
+                        <h4 className="text-sm font-black text-indigo-900 mb-2 uppercase tracking-widest">Sync is optimized!</h4>
+                        <p className="text-[11px] text-indigo-600 font-medium leading-relaxed italic px-4">আপনার ব্রাউজার এখন শান্ত থাকবে। শুধুমাত্র সিঙ্ক করার সময়ই পপআপ আসবে।</p>
                      </div>
                   )}
                 </div>

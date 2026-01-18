@@ -2,51 +2,50 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, AIResponse, SpendingInsight } from "../types";
 
-// Always initialize directly as per instructions
+// Initialize Gemini with the system-provided API Key
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 const EXTRACTION_PROMPT = `
-You are a financial AI agent. Your task is to extract transaction details from the user's natural language input (Bangla or English).
-Users will mention where the money is coming from or going to.
+You are Artho-AI, a specialized financial assistant for Bangladeshi users. 
+Your goal is to extract transaction details from natural language (Bangla, English, or Banglish).
 
-Account Sources:
-- 'BRAC BANK' (Look for: brac, ব্র্যাক, ব্যাংক)
-- 'DBBL' (Look for: dbbl, ডাচ বাংলা)
-- 'BKASH' (Look for: bkash, বিকাশ)
-- 'CASH' (Look for: cash, নগদ, ক্যাশ)
-Default to 'CASH' if no source is mentioned.
+RULES:
+1. CURRENCY: Always treat amounts as BDT (৳). If the user writes amounts in Bengali digits (e.g., ৫০০), convert them to English digits (500).
+2. SOURCE DETECTION:
+   - 'BRAC BANK': brac, ব্র্যাক, ব্যাংক
+   - 'DBBL': dbbl, ডাচ বাংলা, ডাচবাংলা
+   - 'BKASH': bkash, বিকাশ
+   - 'CASH': cash, নগদ, ক্যাশ, হাত খরচ
+3. CATEGORY DETECTION: Use your intelligence to map to: Food, Transport, Bills, Shopping, Entertainment, Health, Education, Income, or Others.
+4. TYPE: 'income' for earnings/deposits, 'expense' for spendings.
+5. NOTE: Write a short, meaningful note in English summarizing the activity.
 
-Categorize into: Food, Transport, Bills, Shopping, Entertainment, Health, Education, Others, or Income.
-Defaults:
-- If it sounds like earning/salary, type is 'income'.
-- If it's spending, type is 'expense'.
-
-IMPORTANT: Return valid JSON.
+If you can't find a source, default to 'CASH'. 
+If the amount is missing, return confidence 0.
 `;
 
 export const extractTransaction = async (input: string): Promise<AIResponse | null> => {
-  if (!process.env.API_KEY) {
-    console.error("Gemini API Key is missing in process.env");
-    return null;
-  }
+  if (!process.env.API_KEY) return null;
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: input,
+      contents: `Input to process: "${input}"`,
       config: {
         systemInstruction: EXTRACTION_PROMPT,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            amount: { type: Type.NUMBER, description: "The numeric amount mentioned." },
-            category: { type: Type.STRING, description: "The category of the transaction." },
-            type: { type: Type.STRING, description: "expense or income" },
-            source: { type: Type.STRING, description: "BRAC BANK, DBBL, BKASH, or CASH" },
-            note: { type: Type.STRING, description: "A short descriptive note in English." },
-            dateRelative: { type: Type.STRING, description: "Relative date like today, yesterday, etc." },
-            confidence: { type: Type.NUMBER, description: "0 to 1 confidence score." }
+            amount: { type: Type.NUMBER },
+            category: { 
+              type: Type.STRING, 
+              enum: ['Food', 'Transport', 'Bills', 'Shopping', 'Entertainment', 'Education', 'Health', 'Income', 'Others'] 
+            },
+            type: { type: Type.STRING, enum: ['expense', 'income'] },
+            source: { type: Type.STRING, enum: ['BRAC BANK', 'DBBL', 'BKASH', 'CASH'] },
+            note: { type: Type.STRING },
+            confidence: { type: Type.NUMBER }
           },
           required: ["amount", "category", "type", "note", "source"]
         }
@@ -65,22 +64,21 @@ export const extractTransaction = async (input: string): Promise<AIResponse | nu
 export const generateInsights = async (transactions: Transaction[]): Promise<SpendingInsight[]> => {
   if (transactions.length === 0 || !process.env.API_KEY) return [];
 
-  const historyStr = transactions.slice(-30).map(t => 
-    `${t.date}: ${t.type} of ${t.amount} from ${t.source} for ${t.category} (${t.note})`
+  // Filter for last month's relevance
+  const historyStr = transactions.slice(-40).map(t => 
+    `${t.date}: ${t.type} of ৳${t.amount} via ${t.source} for ${t.category} (${t.note})`
   ).join('\n');
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Analyze these transactions as a World-Class Financial Advisor. 
-      You MUST return exactly TWO insights written in Bengali (Bangla) language:
-      1. STATUS ANALYSIS: A deep look at their current balance and trends in Bengali. 
-      2. STRATEGIC NUDGE: Concrete advice in Bengali.
-
-      Transactions:
+      contents: `Analyze this user's spending habits. Provide exactly two strategic insights in Bengali. 
+      The tone should be professional yet encouraging (like a rich friend's advice).
+      
+      User Data:
       ${historyStr}`,
       config: {
-        systemInstruction: "You are 'Artho Advisor'. You are calm and brilliant. You focus on wealth growth. Provide exactly 2 distinct insights in Bengali (Bangla) language in JSON format.",
+        systemInstruction: "You are 'Artho Advisor'. Provide financial strategy specifically for the Bangladeshi lifestyle. Focus on savings and smart spending. Return exactly 2 insights in Bengali JSON format.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -89,9 +87,9 @@ export const generateInsights = async (transactions: Transaction[]): Promise<Spe
           items: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING, description: "Clear Section Title in Bengali." },
-              message: { type: Type.STRING, description: "The detailed analysis or advice in Bengali." },
-              type: { type: Type.STRING, description: "info or positive" }
+              title: { type: Type.STRING, description: "Bengali Heading" },
+              message: { type: Type.STRING, description: "Bengali Advice Message" },
+              type: { type: Type.STRING, enum: ['info', 'positive', 'warning'] }
             },
             required: ["title", "message", "type"]
           }
