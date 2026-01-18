@@ -1,429 +1,411 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Transaction, SpendingInsight, Category, AccountSource, SyncState } from './types';
-import { extractTransaction, generateInsights } from './services/geminiService';
-import { SOURCE_COLORS, SOURCE_ICONS } from './constants';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Transaction, Category, SyncState, Account, SpendingInsight } from './types';
+import { extractTransactions, generateInsights } from './services/geminiService';
+import { driveService, DriveSyncData } from './services/googleDriveService';
 import Dashboard from './components/Dashboard';
 import AIChatInput from './components/AIChatInput';
+import SyncManager from './components/SyncManager';
+import Toast, { ToastMessage } from './components/Toast';
 
-const STORAGE_KEY = 'artho_finance_v3_data';
-const CLIENT_ID_KEY = 'artho_google_client_id';
-const USER_EMAIL_KEY = 'artho_user_email';
+const STORAGE_KEY = 'artho_finance_v4_data';
+const ACCOUNTS_KEY = 'artho_accounts_v4';
+const SYNC_KEY = 'artho_sync_state';
+const MUTATION_KEY = 'artho_last_mutation';
+const UNLOCKED_KEY = 'artho_session_unlocked';
 const DEFAULT_PIN = '0000';
+
+const DEFAULT_ACCOUNTS: Account[] = [
+  { id: '1', name: 'BRAC BANK', icon: '🏦', color: '#005DAA' },
+  { id: '2', name: 'DBBL', icon: '💳', color: '#004A2F' },
+  { id: '3', name: 'BKASH', icon: '📱', color: '#D12053' },
+  { id: '4', name: 'CASH', icon: '💵', color: '#059669' },
+];
+
+const getDay = (daysAgo: number) => new Date(Date.now() - 86400000 * daysAgo).toISOString();
+
+const DEMO_TRANSACTIONS: Transaction[] = [
+  { id: 'd1', amount: 75000, category: 'Income', date: getDay(15), type: 'income', source: 'BRAC BANK', note: 'Monthly Salary Received', rawInput: 'Salary 75000' },
+  { id: 'd2', amount: 15000, category: 'Bills', date: getDay(14), type: 'expense', source: 'BRAC BANK', note: 'House Rent Payment', rawInput: 'Rent 15000' },
+  { id: 'd3', amount: 500, category: 'Transport', date: getDay(13), type: 'expense', source: 'CASH', note: 'Rickshaw fare for office', rawInput: 'Rickshaw 500' },
+  { id: 'd4', amount: 2500, category: 'Food', date: getDay(12), type: 'expense', source: 'BKASH', note: 'Dinner at Sultans Dine', rawInput: 'Sultans dine 2500' },
+  { id: 'd5', amount: 1200, category: 'Bills', date: getDay(11), type: 'expense', source: 'BKASH', note: 'Internet Bill (AmberIT)', rawInput: 'Internet 1200' },
+  { id: 'd6', amount: 3500, category: 'Shopping', date: getDay(10), type: 'expense', source: 'DBBL', note: 'New Shirt from Yellow', rawInput: 'Yellow shirt 3500' },
+  { id: 'd7', amount: 450, category: 'Food', date: getDay(9), type: 'expense', source: 'CASH', note: 'Evening Snacks & Tea', rawInput: 'Snacks 450' },
+  { id: 'd8', amount: 5000, category: 'Others', date: getDay(8), type: 'expense', source: 'BKASH', note: 'Sent money to parents', rawInput: 'Parents 5000' },
+  { id: 'd9', amount: 800, category: 'Transport', date: getDay(7), type: 'expense', source: 'DBBL', note: 'Uber ride to Banani', rawInput: 'Uber 800' },
+  { id: 'd10', amount: 1500, category: 'Food', date: getDay(6), type: 'expense', source: 'CASH', note: 'Weekly Grocery Bazaar', rawInput: 'Bazaar 1500' },
+  { id: 'd11', amount: 200, category: 'Bills', date: getDay(5), type: 'expense', source: 'BKASH', note: 'Mobile Recharge (Grameenphone)', rawInput: 'GP recharge 200' },
+  { id: 'd12', amount: 12000, category: 'Income', date: getDay(4), type: 'income', source: 'BKASH', note: 'Freelance Project Payment', rawInput: 'Freelance 12000' },
+  { id: 'd13', amount: 3200, category: 'Health', date: getDay(3), type: 'expense', source: 'DBBL', note: 'Pharmacy Medicines', rawInput: 'Medicine 3200' },
+  { id: 'd14', amount: 650, category: 'Entertainment', date: getDay(2), type: 'expense', source: 'CASH', note: 'Cineplex Movie Ticket', rawInput: 'Movie 650' },
+  { id: 'd15', amount: 120, category: 'Food', date: getDay(1), type: 'expense', source: 'CASH', note: 'Coffee at street side', rawInput: 'Coffee 120' },
+  { id: 'd16', amount: 4500, category: 'Shopping', date: getDay(0), type: 'expense', source: 'BKASH', note: 'Groceries from Shwapno', rawInput: 'Shwapno 4500' },
+];
 
 const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>(() => {
+    const saved = localStorage.getItem(ACCOUNTS_KEY);
+    return saved ? JSON.parse(saved) : DEFAULT_ACCOUNTS;
+  });
+  
   const [insights, setInsights] = useState<SpendingInsight[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [activeTab, setActiveTab] = useState<'records' | 'sync'>('records');
+  const [showSync, setShowSync] = useState(false);
   
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(() => sessionStorage.getItem(UNLOCKED_KEY) === 'true');
   const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
+  
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
   const [visibleItems, setVisibleItems] = useState<Record<string, boolean>>({});
-  const [filterCategory, setFilterCategory] = useState<Category | 'All'>('All');
-  const [filterSource, setFilterSource] = useState<AccountSource | 'All'>('All');
-  const [filterTime, setFilterTime] = useState<'All' | 'Today' | 'Week' | 'Month'>('All');
-
-  const [clientId, setClientId] = useState(localStorage.getItem(CLIENT_ID_KEY) || '');
-  const [userEmail, setUserEmail] = useState(localStorage.getItem(USER_EMAIL_KEY) || '');
-  const [syncStatus, setSyncStatus] = useState<SyncState>({
-    isConnected: false,
-    isSyncing: false,
-    lastSync: localStorage.getItem('last_sync_time') || null,
-    error: null
+  const [syncState, setSyncState] = useState<SyncState>(() => {
+    const saved = localStorage.getItem(SYNC_KEY);
+    return saved ? JSON.parse(saved) : { isConnected: false, isSyncing: false, lastSync: null, error: null };
   });
 
-  const [copyFeedback, setCopyFeedback] = useState(false);
-  const tokenClient = useRef<any>(null);
+  const [localLastMutation, setLocalLastMutation] = useState<string>(() => localStorage.getItem(MUTATION_KEY) || new Date().toISOString());
+  const [conflictData, setConflictData] = useState<DriveSyncData | null>(null);
 
-  // Initialize Google Token Client
-  useEffect(() => {
-    const initGoogle = () => {
-      if (clientId && (window as any).google) {
-        try {
-          tokenClient.current = (window as any).google.accounts.oauth2.initTokenClient({
-            client_id: clientId,
-            scope: 'https://www.googleapis.com/auth/drive.file',
-            callback: (resp: any) => {
-              if (resp.access_token) {
-                // If we get a token, it means user is authenticated for this session
-                handleSync(resp.access_token);
-              }
-            },
-          });
-          // We NO LONGER call triggerSync() here automatically to prevent the reload popup
-        } catch (e) {
-          console.error("GSI Init Error", e);
-        }
-      }
-    };
-    
-    const timer = setTimeout(initGoogle, 1500);
-    return () => clearTimeout(timer);
-  }, [clientId]);
+  const [filterCategory, setFilterCategory] = useState<Category | 'All'>('All');
+  const [filterSource, setFilterSource] = useState<string | 'All'>('All');
+  const [filterTime, setFilterTime] = useState<'All' | 'Today' | 'Week' | 'Month'>('All');
 
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        setTransactions(JSON.parse(saved));
-      } catch (e) {
-        setTransactions([]);
-      }
+  const initializedCloud = useRef(false);
+
+  const addToast = useCallback((message: string, type: 'error' | 'success' | 'warning' | 'info' = 'info') => {
+    setToasts(prev => [...prev, { id: crypto.randomUUID(), message, type }]);
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const updateDataWithMutation = useCallback((newTxs: Transaction[], newAccounts?: Account[]) => {
+    const now = new Date().toISOString();
+    setTransactions(newTxs);
+    if (newAccounts) {
+      setAccounts(newAccounts);
+      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(newAccounts));
     }
+    setLocalLastMutation(now);
+    localStorage.setItem(MUTATION_KEY, now);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newTxs));
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
-    if (transactions.length > 0) refreshInsights();
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved && JSON.parse(saved).length > 0) {
+      setTransactions(JSON.parse(saved));
+    } else {
+      setTransactions(DEMO_TRANSACTIONS);
+    }
+  }, []);
+
+  const pushToCloud = useCallback(async (dataToPush: DriveSyncData) => {
+    try {
+      await driveService.uploadData(dataToPush);
+      setSyncState(prev => ({ ...prev, lastSync: new Date().toISOString(), isSyncing: false, error: null }));
+    } catch (err: any) {
+       const errMsg = err?.result?.error?.message || 'Failed to upload to Google Drive.';
+       addToast(errMsg, 'error');
+       throw err;
+    }
+  }, [addToast]);
+
+  const handleManualSync = useCallback(async () => {
+    setSyncState(prev => ({ ...prev, isSyncing: true, error: null }));
+    try {
+      const cloudData = await driveService.downloadData();
+      
+      if (!cloudData) {
+        await pushToCloud({ transactions, accounts, lastUpdated: localLastMutation });
+        addToast('Initial cloud backup created!', 'success');
+        return;
+      }
+
+      const cloudTime = new Date(cloudData.lastUpdated).getTime();
+      const localTime = new Date(localLastMutation).getTime();
+
+      if (cloudTime > localTime) {
+        updateDataWithMutation(cloudData.transactions, cloudData.accounts);
+        addToast('Data synced from Google Drive.', 'success');
+        setSyncState(prev => ({ ...prev, lastSync: new Date().toISOString(), isSyncing: false, error: null }));
+      } else if (localTime > cloudTime) {
+        setConflictData(cloudData);
+        setSyncState(prev => ({ ...prev, isSyncing: false }));
+      } else {
+        addToast('Data is already up to date.', 'success');
+        setSyncState(prev => ({ ...prev, isSyncing: false }));
+      }
+    } catch (e: any) {
+      const errMsg = e?.result?.error?.message || 'Unable to reach Google Drive. Check your connection.';
+      setSyncState(prev => ({ ...prev, isSyncing: false, error: errMsg }));
+      addToast(errMsg, 'error');
+    }
+  }, [transactions, accounts, localLastMutation, updateDataWithMutation, pushToCloud, addToast]);
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      if (initializedCloud.current) return;
+      const savedToken = driveService.getSavedToken();
+      if (savedToken && syncState.isConnected) {
+        try {
+          await driveService.initGapi();
+          driveService.setAccessToken(savedToken);
+          initializedCloud.current = true;
+          handleManualSync();
+        } catch (err) {
+          console.error("Cloud session restoration failed", err);
+          setSyncState(prev => ({ ...prev, isConnected: false }));
+          addToast("Cloud session expired. Please reconnect.", "warning");
+        }
+      }
+    };
+    restoreSession();
+  }, [syncState.isConnected, handleManualSync, addToast]);
+
+  useEffect(() => {
+    localStorage.setItem(SYNC_KEY, JSON.stringify(syncState));
+  }, [syncState]);
+
+  useEffect(() => {
+    if (transactions.length > 0) {
+      generateInsights(transactions).then(setInsights);
+    }
   }, [transactions]);
 
-  const refreshInsights = async () => {
-    const newInsights = await generateInsights(transactions);
-    setInsights(newInsights);
-  };
-
-  const handleSync = async (token: string) => {
-    setSyncStatus(p => ({ ...p, isSyncing: true, isConnected: true }));
+  const resolveConflict = async (useLocal: boolean) => {
+    if (!conflictData) return;
+    setSyncState(prev => ({ ...prev, isSyncing: true }));
+    
     try {
-      // Get user info if possible (optional, but helps for hints)
-      // Since we are using standard drive scope, we might not have profile access
-      // But we can try to find the file first
-      const fileName = 'artho_vault_data.json';
-      const listResp = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='${fileName}' and trashed=false`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const listData = await listResp.json();
-      const file = listData.files?.[0];
-      let finalData = [...transactions];
-
-      if (file) {
-        const downloadResp = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const cloudData = await downloadResp.json();
-        if (Array.isArray(cloudData)) {
-          const existingIds = new Set(transactions.map(t => t.id));
-          const newItems = cloudData.filter(ct => !existingIds.has(ct.id));
-          finalData = [...transactions, ...newItems];
-          setTransactions(finalData);
-        }
-        const metadata = { name: fileName, mimeType: 'application/json' };
-        const form = new FormData();
-        form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-        form.append('file', new Blob([JSON.stringify(finalData)], { type: 'application/json' }));
-        await fetch(`https://www.googleapis.com/upload/drive/v3/files/${file.id}?uploadType=multipart`, {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${token}` },
-          body: form
-        });
+      if (useLocal) {
+        await pushToCloud({ transactions, accounts, lastUpdated: localLastMutation });
+        addToast('Local version uploaded to cloud.', 'success');
       } else {
-        const metadata = { name: fileName, mimeType: 'application/json' };
-        const form = new FormData();
-        form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-        form.append('file', new Blob([JSON.stringify(finalData)], { type: 'application/json' }));
-        await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body: form
-        });
+        updateDataWithMutation(conflictData.transactions, conflictData.accounts);
+        addToast('Cloud version restored locally.', 'success');
+        setSyncState(prev => ({ ...prev, lastSync: new Date().toISOString(), isSyncing: false }));
       }
-      const now = new Date().toLocaleTimeString();
-      setSyncStatus(p => ({ ...p, lastSync: now, isSyncing: false, error: null }));
-      localStorage.setItem('last_sync_time', now);
-    } catch (err: any) {
-      setSyncStatus(p => ({ ...p, error: "Sync Failed", isSyncing: false }));
+    } catch (err) {
+    } finally {
+      setConflictData(null);
     }
   };
 
-  const triggerSync = (forcePrompt = false) => {
-    if (tokenClient.current) {
-      // Use hint if we have userEmail to avoid account chooser if possible
-      // and only prompt if we explicitly want to or if we are not connected
-      tokenClient.current.requestAccessToken({ 
-        prompt: forcePrompt ? 'select_account' : '',
-        hint: userEmail || undefined 
+  const handleGoogleConnect = useCallback(() => {
+    try {
+      const client = (window as any).google.accounts.oauth2.initTokenClient({
+        client_id: '674314050201-kps5j9q69v7ofn0o271pno0b0k4q4sh8.apps.googleusercontent.com',
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        callback: async (response: any) => {
+          if (response.access_token) {
+            await driveService.initGapi();
+            driveService.setAccessToken(response.access_token, response.expires_in || 3600);
+            setSyncState(prev => ({ ...prev, isConnected: true }));
+            handleManualSync();
+            addToast('Google Drive connected!', 'success');
+          } else if (response.error) {
+            addToast(`Authentication failed: ${response.error}`, 'error');
+          }
+        },
+        error_callback: (err: any) => {
+          addToast(`Auth Error: ${err.message}`, 'error');
+        }
       });
+      client.requestAccessToken();
+    } catch (e: any) {
+      addToast('Failed to initialize Google Auth.', 'error');
+    }
+  }, [handleManualSync, addToast]);
+
+  const handleDisconnect = useCallback(() => {
+    driveService.clearToken();
+    setSyncState({ isConnected: false, isSyncing: false, lastSync: null, error: null });
+    addToast('Google Drive disconnected.', 'info');
+  }, [addToast]);
+
+  const handlePinPress = (val: string) => {
+    if (val === 'C') setPinInput('');
+    else if (pinInput.length < 4) {
+      const newPin = pinInput + val;
+      setPinInput(newPin);
+      if (newPin.length === 4) {
+        if (newPin === DEFAULT_PIN) {
+          setIsUnlocked(true);
+          sessionStorage.setItem(UNLOCKED_KEY, 'true');
+        } else {
+          setTimeout(() => setPinInput(''), 500);
+        }
+      }
     }
   };
 
   const handleProcessInput = async (input: string) => {
     setIsLoading(true);
     try {
-      const result = await extractTransaction(input);
-      if (result && result.amount > 0) {
-        const newTransaction: Transaction = {
+      const results = await extractTransactions(input, accounts.map(a => a.name));
+      if (results?.length > 0) {
+        const newEntries: Transaction[] = results.map(r => ({
           id: crypto.randomUUID(),
-          amount: result.amount,
-          category: result.category,
+          amount: r.amount,
+          category: r.category as any,
           date: new Date().toISOString(),
-          type: result.type,
-          source: result.source || 'CASH',
-          note: result.note,
+          type: r.type,
+          source: r.source,
+          note: r.note,
           rawInput: input
-        };
-        setTransactions(prev => [...prev, newTransaction]);
-        // Only trigger sync if client is already set up
-        if (clientId && syncStatus.isConnected) {
-          setTimeout(() => triggerSync(false), 500);
-        }
+        }));
+        updateDataWithMutation([...transactions, ...newEntries]);
+        addToast(`${newEntries.length} transaction(s) recorded.`, 'success');
+      } else {
+        addToast("Sorry, I couldn't understand that transaction.", "warning");
       }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter(t => {
-      const matchesCategory = filterCategory === 'All' || t.category === filterCategory;
-      const matchesSource = filterSource === 'All' || t.source === filterSource;
-      const txDate = new Date(t.date);
-      const now = new Date();
-      let matchesTime = true;
-      if (filterTime === 'Today') matchesTime = txDate.toDateString() === now.toDateString();
-      else if (filterTime === 'Week') {
-        const weekAgo = new Date(); weekAgo.setDate(now.getDate() - 7);
-        matchesTime = txDate >= weekAgo;
-      } else if (filterTime === 'Month') matchesTime = txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear();
-      return matchesCategory && matchesSource && matchesTime;
-    });
-  }, [transactions, filterCategory, filterSource, filterTime]);
-
-  const handleCopyId = () => {
-    navigator.clipboard.writeText(clientId);
-    setCopyFeedback(true);
-    setTimeout(() => setCopyFeedback(false), 2000);
+    } catch (e) {
+      addToast("Error processing your request.", "error");
+    } finally { setIsLoading(false); }
   };
 
   if (!isUnlocked) {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white font-sans">
-        <div className="w-20 h-20 bg-indigo-600 rounded-[2.5rem] flex items-center justify-center text-4xl font-black mb-10 shadow-3xl shadow-indigo-500/40 transform -rotate-3">A</div>
-        <h1 className="text-3xl font-black mb-2 tracking-tight">Artho Cloud Vault</h1>
-        <p className="text-slate-500 text-xs mb-12 font-bold uppercase tracking-[0.2em]">Enter PIN to Decrypt</p>
-        <div className="w-full max-w-[280px] space-y-12">
-          <div className="flex justify-center gap-5">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className={`w-5 h-5 rounded-full border-2 transition-all duration-300 ${pinInput.length > i ? 'bg-indigo-500 border-indigo-500 scale-125' : 'bg-transparent border-slate-700'} ${pinError ? 'border-rose-500 bg-rose-500 animate-shake' : ''}`} />
-            ))}
-          </div>
-          <div className="grid grid-cols-3 gap-6">
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, 'OK'].map((val) => (
-              <button key={val} type="button" onClick={() => {
-                if (val === 'C') setPinInput('');
-                else if (val === 'OK') { if(pinInput === DEFAULT_PIN) setIsUnlocked(true); else { setPinError(true); setTimeout(()=>setPinError(false), 500); } }
-                else if (pinInput.length < 4) {
-                  const next = pinInput + val;
-                  setPinInput(next);
-                  if (next === DEFAULT_PIN) setTimeout(() => { setIsUnlocked(true); setPinInput(''); }, 200);
-                  else if (next.length === 4) { setPinError(true); setTimeout(()=>setPinError(false), 500); }
-                }
-              }} className="w-16 h-16 rounded-3xl flex items-center justify-center text-2xl font-black bg-slate-800 hover:bg-slate-700 text-white shadow-xl active:scale-90 transition-all">
-                {val}
-              </button>
-            ))}
-          </div>
+      <div className="fixed inset-0 bg-[#0f172a] flex flex-col items-center justify-center text-white">
+        <div className="mb-12 text-center animate-pulse">
+          <div className="w-24 h-24 bg-indigo-600 rounded-[2rem] flex items-center justify-center text-5xl font-black mb-6 mx-auto shadow-2xl">A</div>
+          <h1 className="text-3xl font-black tracking-tight uppercase">Artho Vault</h1>
         </div>
-        <style>{`@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } } .animate-shake { animation: shake 0.2s ease-in-out; }`}</style>
+        <div className="flex gap-4 mb-14">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className={`w-4 h-4 rounded-full ${pinInput.length > i ? 'bg-indigo-500 scale-125' : 'bg-slate-800'}`} />
+          ))}
+        </div>
+        <div className="grid grid-cols-3 gap-6">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, '✕'].map((val) => (
+            <button key={val} onClick={() => val === '✕' ? setPinInput(pinInput.slice(0, -1)) : handlePinPress(val.toString())} className="h-20 w-20 rounded-full flex items-center justify-center text-3xl font-bold bg-slate-800/30 active:scale-90">{val}</button>
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4">
-      <div className="w-full max-w-4xl">
-        <header className="flex items-center justify-between py-8 px-4">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 bg-indigo-600 rounded-[1.5rem] flex items-center justify-center text-white font-black text-3xl shadow-2xl shadow-indigo-200">A</div>
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 pb-56 font-['Inter']">
+      <div className="fixed top-8 left-1/2 -translate-x-1/2 z-[500] flex flex-col gap-3 w-full max-w-sm px-4 pointer-events-none">
+        {toasts.map(toast => (
+          <Toast key={toast.id} toast={toast} onClose={removeToast} />
+        ))}
+      </div>
+
+      <div className="max-w-6xl mx-auto px-10">
+        <header className="py-12 flex items-center justify-between">
+          <div className="flex items-center gap-5">
+            <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-3xl shadow-2xl transition-transform hover:rotate-3">A</div>
             <div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none">Artho</h1>
-              <div className="flex items-center gap-2 mt-1.5">
-                <div 
-                  onClick={() => { setShowHistory(true); setActiveTab('sync'); }}
-                  className="flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-full border border-slate-100 shadow-sm cursor-pointer hover:bg-slate-50 transition-all"
-                >
-                   <div className={`w-2 h-2 rounded-full ${syncStatus.isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-300'} ${syncStatus.isSyncing ? 'animate-pulse' : ''}`}></div>
-                   <span className="text-[9px] text-slate-500 font-black uppercase tracking-widest">
-                     {syncStatus.isSyncing ? 'Syncing...' : syncStatus.isConnected ? `Cloud Connected` : 'Sync Offline'}
-                   </span>
+                <h1 className="text-3xl font-black tracking-tighter text-slate-900">Artho</h1>
+                <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${syncState.isConnected ? 'bg-emerald-400' : 'bg-slate-300'}`}></div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                        {syncState.isConnected ? 'Cloud Protected' : 'Local Only'}
+                    </p>
                 </div>
-              </div>
             </div>
           </div>
-          <div className="flex gap-2.5">
-            <button onClick={() => { setShowHistory(true); setActiveTab('sync'); }} className={`w-12 h-12 rounded-[1.25rem] bg-white border border-slate-200 shadow-sm flex items-center justify-center transition-all hover:scale-105 active:scale-95 ${syncStatus.isConnected ? 'text-indigo-600' : 'text-slate-400'}`}>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
-            </button>
-            <button onClick={() => { setShowHistory(true); setActiveTab('records'); }} className="w-12 h-12 rounded-[1.25rem] bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-500 hover:text-indigo-600 transition-all hover:scale-105 active:scale-95">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            </button>
-            <button onClick={() => { setIsUnlocked(false); setPinInput(''); }} className="w-12 h-12 rounded-[1.25rem] bg-slate-900 text-white shadow-xl flex items-center justify-center hover:bg-black transition-all hover:scale-105 active:scale-95">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 00-2 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-            </button>
+          <div className="flex gap-4">
+             <button onClick={() => setShowSync(true)} className="w-14 h-14 bg-white rounded-full shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all active:scale-90 relative">
+               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
+               {syncState.isConnected && <div className="absolute top-3 right-3 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />}
+             </button>
+             <button onClick={() => setShowHistory(true)} className="w-14 h-14 bg-white rounded-full shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all active:scale-90">
+               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+             </button>
           </div>
         </header>
 
         <Dashboard 
-          transactions={filteredTransactions} 
+          transactions={transactions} 
           insights={insights} 
           visibleItems={visibleItems}
           onToggleItem={(k) => setVisibleItems(p => ({ ...p, [k]: !p[k] }))}
           filterCategory={filterCategory} setFilterCategory={setFilterCategory}
           filterSource={filterSource} setFilterSource={setFilterSource}
           filterTime={filterTime} setFilterTime={setFilterTime}
+          accounts={accounts}
         />
-        <AIChatInput onProcess={handleProcessInput} isLoading={isLoading} transactions={transactions} />
       </div>
 
+      <AIChatInput onProcess={handleProcessInput} isLoading={isLoading} transactions={transactions} />
+
+      <SyncManager 
+        isOpen={showSync} 
+        onClose={() => setShowSync(false)}
+        syncState={syncState}
+        onConnect={handleGoogleConnect}
+        onSyncNow={handleManualSync}
+        onDisconnect={handleDisconnect}
+      />
+
+      {conflictData && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center px-6">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-xl" />
+          <div className="bg-white w-full max-w-lg relative rounded-[3.5rem] p-12 shadow-2xl animate-scale-in text-center">
+             <div className="w-20 h-20 bg-amber-50 rounded-3xl flex items-center justify-center text-4xl mx-auto mb-8">⚠️</div>
+             <h2 className="text-2xl font-black text-slate-900 mb-4">Sync Conflict</h2>
+             <p className="text-slate-400 font-medium mb-10 leading-relaxed px-4 text-sm">
+               We found a newer version of your data on Google Drive, but you also have unsynced local changes. Which one should we keep?
+             </p>
+             <div className="space-y-4">
+                <button 
+                  onClick={() => resolveConflict(true)}
+                  className="w-full py-6 bg-indigo-600 text-white rounded-[2rem] font-black text-[11px] uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex flex-col items-center gap-1"
+                >
+                  Keep Local Version
+                  <span className="text-[8px] opacity-60 normal-case font-medium">Overwrites cloud data</span>
+                </button>
+                <button 
+                  onClick={() => resolveConflict(false)}
+                  className="w-full py-6 bg-slate-100 text-slate-900 rounded-[2rem] font-black text-[11px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95 flex flex-col items-center gap-1"
+                >
+                  Use Cloud Version
+                  <span className="text-[8px] opacity-60 normal-case font-medium">Overwrites local data</span>
+                </button>
+             </div>
+          </div>
+        </div>
+      )}
+
       {showHistory && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex justify-end">
-          <div className="w-full max-w-md bg-white h-full shadow-2xl p-8 animate-slide-left flex flex-col rounded-l-[3.5rem] border-l border-white/20 overflow-hidden">
-            <div className="flex items-center justify-between mb-10 shrink-0">
-              <div>
-                <h2 className="text-3xl font-black text-slate-900 tracking-tight">Cloud Vault</h2>
-                <div className="flex gap-6 mt-4">
-                  <button onClick={() => setActiveTab('records')} className={`text-[11px] font-black uppercase tracking-widest transition-all ${activeTab === 'records' ? 'text-indigo-600 border-b-2 border-indigo-600 pb-1.5' : 'text-slate-400'}`}>Transactions</button>
-                  <button onClick={() => setActiveTab('sync')} className={`text-[11px] font-black uppercase tracking-widest transition-all ${activeTab === 'sync' ? 'text-indigo-600 border-b-2 border-indigo-600 pb-1.5' : 'text-slate-400'}`}>Sync Settings</button>
-                </div>
-              </div>
-              <button onClick={() => setShowHistory(false)} className="w-12 h-12 bg-slate-100 rounded-2xl text-slate-600 flex items-center justify-center hover:bg-slate-200 transition-all">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto no-scrollbar pb-10">
-              {activeTab === 'records' ? (
-                <div className="space-y-4">
-                  {filteredTransactions.length === 0 ? <p className="text-center text-slate-400 py-20 font-bold uppercase text-[10px] tracking-widest">No history found</p> : 
-                    [...filteredTransactions].reverse().map(t => (
-                      <div key={t.id} className="p-6 rounded-[2rem] bg-slate-50 border border-slate-100 group relative hover:border-indigo-200 hover:bg-white hover:shadow-xl hover:shadow-slate-100 transition-all">
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex items-center gap-2 px-3 py-1 rounded-full text-white text-[10px] font-black uppercase" style={{ backgroundColor: SOURCE_COLORS[t.source] }}>{SOURCE_ICONS[t.source]} {t.source}</div>
-                          <span className="text-[10px] text-slate-400 font-black">{new Date(t.date).toLocaleDateString()}</span>
+        <div className="fixed inset-0 z-[200] flex justify-end">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowHistory(false)} />
+          <div className="w-full max-w-lg bg-white h-full relative shadow-2xl flex flex-col p-10 animate-slide-in">
+            <h2 className="text-2xl font-black mb-10 text-slate-900">Transaction History</h2>
+            <div className="flex-1 overflow-y-auto space-y-4 scrollbar-hide">
+                {transactions.slice().reverse().map(t => (
+                    <div key={t.id} className="p-6 bg-slate-50 rounded-3xl border border-slate-100 flex justify-between items-center group transition-transform hover:scale-[1.02]">
+                        <div className="flex items-center gap-4">
+                            <div className={`w-1 h-10 rounded-full ${t.type === 'income' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                            <div>
+                                <p className="font-bold text-slate-800 text-sm text-wrap break-words">{t.note}</p>
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{t.source} • {new Date(t.date).toLocaleDateString()}</p>
+                            </div>
                         </div>
-                        <div className="flex justify-between items-center">
-                          <p className="font-bold text-slate-800 text-sm">{t.note}</p>
-                          <p className={`font-black text-xl ${t.type === 'income' ? 'text-emerald-500' : 'text-rose-500'}`}>{t.type === 'income' ? '+' : '-'}৳{t.amount.toLocaleString()}</p>
-                        </div>
-                        <button onClick={() => { if(confirm('Delete this record?')) setTransactions(p => p.filter(x => x.id !== t.id)); }} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-2 text-rose-300 hover:text-rose-500 transition-all">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                      </div>
-                    ))
-                  }
-                </div>
-              ) : (
-                <div className="space-y-8">
-                  <div className="bg-indigo-600 p-8 rounded-[2.5rem] text-white shadow-2xl shadow-indigo-100 relative overflow-hidden">
-                    <h3 className="text-sm font-black uppercase tracking-widest mb-4">Google Cloud Status</h3>
-                    <p className="text-[11px] text-indigo-100 mb-8 font-medium leading-relaxed opacity-90 italic">আপনার ডেটা এখন ক্লাউডে সুরক্ষিত থাকবে।</p>
-                    
-                    {clientId ? (
-                      <div className="space-y-4">
-                        <div className={`p-5 rounded-2xl border flex items-center gap-4 transition-all ${syncStatus.isConnected ? 'bg-emerald-400/20 border-emerald-400/30' : 'bg-rose-400/20 border-rose-400/30'}`}>
-                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${syncStatus.isConnected ? 'bg-emerald-400 text-emerald-900' : 'bg-rose-400 text-rose-900'}`}>
-                             {syncStatus.isConnected ? '✅' : '❌'}
-                           </div>
-                           <div>
-                             <p className="text-[10px] font-black uppercase tracking-widest text-white">
-                               {syncStatus.isConnected ? 'Vault Connected' : 'Authorization Needed'}
-                             </p>
-                             <p className="text-[8px] font-bold opacity-70 mt-0.5">
-                               {syncStatus.isConnected ? 'Your private cloud is active' : 'Connect to start syncing'}
-                             </p>
-                           </div>
-                        </div>
-                        <div className="bg-white/10 p-4 rounded-xl border border-white/20 flex flex-col gap-2">
-                          <span className="text-[8px] font-black uppercase opacity-60">Active Client ID</span>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-mono break-all line-clamp-1 flex-1">{clientId}</span>
-                            <button onClick={handleCopyId} className="p-2 hover:bg-white/10 rounded-lg transition-all active:scale-90">
-                              {copyFeedback ? '✅' : <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>}
-                            </button>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => triggerSync(true)}
-                          disabled={syncStatus.isSyncing}
-                          className="w-full py-5 bg-white text-indigo-600 rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-50 shadow-xl transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
-                        >
-                          {syncStatus.isSyncing ? 'Synchronizing...' : 'Sync with Cloud Now'}
-                        </button>
-                        <div className="flex flex-col gap-2 pt-2">
-                          <p className="text-[8px] text-center text-indigo-100/50 font-bold uppercase tracking-widest">
-                            রিলোড করলে অটো-পপআপ বন্ধ করা হয়েছে। সিঙ্ক করতে উপরে ক্লিক করুন।
-                          </p>
-                          <div className="flex justify-center">
-                             <button onClick={() => { if(confirm('Delete ID?')) { setClientId(''); localStorage.removeItem(CLIENT_ID_KEY); setSyncStatus(p => ({ ...p, isConnected: false })); } }} className="text-[10px] font-bold text-indigo-200 hover:text-white transition-all underline">Use Different Client ID</button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-6">
-                        <div className="bg-indigo-700/50 p-5 rounded-2xl border border-white/10">
-                          <p className="text-[10px] font-black uppercase tracking-widest mb-3">Paste Your Client ID here:</p>
-                          <input 
-                            type="text" 
-                            placeholder="...apps.googleusercontent.com" 
-                            className="w-full p-4 rounded-xl border-none text-[11px] font-mono bg-white text-indigo-900 outline-none focus:ring-4 focus:ring-white/20 shadow-inner"
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                const val = (e.target as HTMLInputElement).value.trim();
-                                if (val) { setClientId(val); localStorage.setItem(CLIENT_ID_KEY, val); }
-                              }
-                            }}
-                          />
-                          <p className="text-[8px] mt-3 opacity-60 text-center font-bold uppercase tracking-widest">Anyone can use their own ID to start syncing</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-4">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Smart Sync Rules</h4>
-                    <div className="bg-slate-50 border border-slate-200 p-6 rounded-[2rem] space-y-4">
-                       <div className="flex gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-lg shrink-0 border border-indigo-100">🚀</div>
-                         <div>
-                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">No Auto-Popup</p>
-                            <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                              পেজ রিলোড করলে এখন আর বিরক্তিকর পপআপ আসবে না। আপনি চাইলে ম্যানুয়ালি সিঙ্ক করতে পারবেন।
-                            </p>
-                         </div>
-                       </div>
-                       <div className="flex gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-lg shrink-0 border border-emerald-100">📧</div>
-                         <div>
-                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">Account Memory</p>
-                            <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                              একবার সিঙ্ক করলে অ্যাপ আপনার ইমেইল মনে রাখবে, যাতে বারবার একাউন্ট সিলেক্ট করতে না হয়।
-                            </p>
-                         </div>
-                       </div>
+                        <p className={`font-black text-base flex-shrink-0 ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-900'}`}>{t.type === 'income' ? '+' : '-'}৳{t.amount.toLocaleString()}</p>
                     </div>
-                  </div>
-
-                  {clientId && syncStatus.isConnected && (
-                     <div className="p-8 bg-indigo-50 rounded-[2rem] border border-indigo-100 text-center shadow-inner">
-                        <div className="text-4xl mb-4">✨</div>
-                        <h4 className="text-sm font-black text-indigo-900 mb-2 uppercase tracking-widest">Sync is optimized!</h4>
-                        <p className="text-[11px] text-indigo-600 font-medium leading-relaxed italic px-4">আপনার ব্রাউজার এখন শান্ত থাকবে। শুধুমাত্র সিঙ্ক করার সময়ই পপআপ আসবে।</p>
-                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-            
-            <div className="shrink-0 pt-8 border-t border-slate-100 bg-white">
-               <button onClick={() => { if(confirm('এটি আপনার ফোনের সব ডেটা মুছে ফেলবে। আপনি কি নিশ্চিত?')) { setTransactions([]); localStorage.removeItem(STORAGE_KEY); } }} className="w-full py-5 text-rose-500 text-[11px] font-black uppercase tracking-widest hover:bg-rose-50 rounded-2xl transition-all">Destroy Local Records</button>
+                ))}
             </div>
           </div>
         </div>
       )}
-      <style>{`.no-scrollbar::-webkit-scrollbar { display: none; } .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; } @keyframes slide-left { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } } .animate-slide-left { animation: slide-left 0.5s cubic-bezier(0.16, 1, 0.3, 1); }`}</style>
+      <style>{`
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        .animate-slide-in { animation: slideIn 0.3s ease-out; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        @keyframes scaleIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .animate-scale-in { animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        @keyframes toastSlideIn { from { transform: translateY(-100%) translateX(0); opacity: 0; } to { transform: translateY(0) translateX(0); opacity: 1; } }
+        .animate-toast-slide-in { animation: toastSlideIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+      `}</style>
     </div>
   );
 };

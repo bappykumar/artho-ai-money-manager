@@ -2,93 +2,107 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, AIResponse, SpendingInsight } from "../types";
 
-// Initialize Gemini with the system-provided API Key
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const EXTRACTION_PROMPT = `
-You are Artho-AI, a specialized financial assistant for Bangladeshi users. 
-Your goal is to extract transaction details from natural language (Bangla, English, or Banglish).
+export const extractTransactions = async (input: string, activeAccounts: string[]): Promise<AIResponse[]> => {
+  const EXTRACTION_PROMPT = `
+You are Artho-AI, a smart financial assistant for Bangladeshis. 
+Identify every single financial event (expenses, income, lending) mentioned in the text.
 
 RULES:
-1. CURRENCY: Always treat amounts as BDT (৳). If the user writes amounts in Bengali digits (e.g., ৫০০), convert them to English digits (500).
-2. SOURCE DETECTION:
-   - 'BRAC BANK': brac, ব্র্যাক, ব্যাংক
-   - 'DBBL': dbbl, ডাচ বাংলা, ডাচবাংলা
-   - 'BKASH': bkash, বিকাশ
-   - 'CASH': cash, নগদ, ক্যাশ, হাত খরচ
-3. CATEGORY DETECTION: Use your intelligence to map to: Food, Transport, Bills, Shopping, Entertainment, Health, Education, Income, or Others.
-4. TYPE: 'income' for earnings/deposits, 'expense' for spendings.
-5. NOTE: Write a short, meaningful note in English summarizing the activity.
+1. DETECT ALL events.
+2. CURRENCY: BDT (৳). 
+3. ACCOUNTS: Map to [${activeAccounts.join(', ')}]. Default to "CASH".
+4. CATEGORIES: Food, Transport, Bills, Shopping, Entertainment, Education, Health, Income, or Others.
+5. NOTES: English notes (e.g., "Bus fare", "Loan to friend").
 
-If you can't find a source, default to 'CASH'. 
-If the amount is missing, return confidence 0.
+Return an ARRAY of objects.
 `;
-
-export const extractTransaction = async (input: string): Promise<AIResponse | null> => {
-  if (!process.env.API_KEY) return null;
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Input to process: "${input}"`,
+      contents: `Extract transactions: "${input}"`,
       config: {
         systemInstruction: EXTRACTION_PROMPT,
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            amount: { type: Type.NUMBER },
-            category: { 
-              type: Type.STRING, 
-              enum: ['Food', 'Transport', 'Bills', 'Shopping', 'Entertainment', 'Education', 'Health', 'Income', 'Others'] 
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              amount: { type: Type.NUMBER },
+              category: { type: Type.STRING },
+              type: { type: Type.STRING, enum: ['expense', 'income'] },
+              source: { type: Type.STRING },
+              note: { type: Type.STRING },
+              confidence: { type: Type.NUMBER }
             },
-            type: { type: Type.STRING, enum: ['expense', 'income'] },
-            source: { type: Type.STRING, enum: ['BRAC BANK', 'DBBL', 'BKASH', 'CASH'] },
-            note: { type: Type.STRING },
-            confidence: { type: Type.NUMBER }
-          },
-          required: ["amount", "category", "type", "note", "source"]
+            required: ["amount", "category", "type", "note", "source"]
+          }
         }
       }
     });
 
-    const text = response.text;
-    if (!text) return null;
-    return JSON.parse(text.trim());
+    const results = JSON.parse(response.text.trim());
+    return Array.isArray(results) ? results : [results];
   } catch (error) {
-    console.error("Gemini Extraction Error:", error);
-    return null;
+    console.error("AI Extraction Error:", error);
+    return [];
   }
 };
 
 export const generateInsights = async (transactions: Transaction[]): Promise<SpendingInsight[]> => {
-  if (transactions.length === 0 || !process.env.API_KEY) return [];
+  if (transactions.length < 1) return [];
 
-  // Filter for last month's relevance
-  const historyStr = transactions.slice(-40).map(t => 
-    `${t.date}: ${t.type} of ৳${t.amount} via ${t.source} for ${t.category} (${t.note})`
-  ).join('\n');
+  let totalIncome = 0;
+  let totalExpense = 0;
+  const categoryTotals: Record<string, number> = {};
+  
+  transactions.forEach(t => {
+    if (t.type === 'income') totalIncome += t.amount;
+    else {
+      totalExpense += t.amount;
+      categoryTotals[t.category] = (categoryTotals[t.category] || 0) + t.amount;
+    }
+  });
+
+  const currentBalance = totalIncome - totalExpense;
+  const topCategory = Object.entries(categoryTotals).sort((a,b) => b[1] - a[1])[0]?.[0] || 'N/A';
+
+  const contextStr = `
+Balance: ৳${currentBalance}
+Income: ৳${totalIncome}
+Expenses: ৳${totalExpense}
+Top Spend: ${topCategory}
+Recent: ${transactions.slice(-3).map(t => `${t.note} (৳${t.amount})`).join(', ')}
+`;
+
+  const INSIGHT_PROMPT = `
+You are a expert Financial Advisor. Analyze the user's context and provide 2 CONCISE actionable insights in BENGALI.
+
+Guidelines:
+1. Card 1: "সঞ্চয় ও বিনিয়োগ" - Advice on saving/investing based on their ৳${currentBalance} balance.
+2. Card 2: "বাজেট পরিকল্পনা" - Advice on cutting costs based on their spending of ৳${totalExpense}.
+
+Keep messages brief (max 2-3 sentences) to fit in small UI cards.
+Return as JSON array.
+`;
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Analyze this user's spending habits. Provide exactly two strategic insights in Bengali. 
-      The tone should be professional yet encouraging (like a rich friend's advice).
-      
-      User Data:
-      ${historyStr}`,
+      contents: `Financial Context:\n${contextStr}`,
       config: {
-        systemInstruction: "You are 'Artho Advisor'. Provide financial strategy specifically for the Bangladeshi lifestyle. Focus on savings and smart spending. Return exactly 2 insights in Bengali JSON format.",
+        systemInstruction: INSIGHT_PROMPT,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
-          minItems: 2,
-          maxItems: 2,
           items: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING, description: "Bengali Heading" },
-              message: { type: Type.STRING, description: "Bengali Advice Message" },
+              title: { type: Type.STRING },
+              message: { type: Type.STRING },
               type: { type: Type.STRING, enum: ['info', 'positive', 'warning'] }
             },
             required: ["title", "message", "type"]
@@ -96,12 +110,9 @@ export const generateInsights = async (transactions: Transaction[]): Promise<Spe
         }
       }
     });
-
-    const text = response.text;
-    if (!text) return [];
-    return JSON.parse(text.trim());
+    return JSON.parse(response.text.trim());
   } catch (error) {
-    console.error("Gemini Insights Error:", error);
+    console.error("AI Insight Error:", error);
     return [];
   }
 };
