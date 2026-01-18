@@ -34,6 +34,8 @@ const App: React.FC = () => {
     error: null
   });
 
+  const [copyFeedback, setCopyFeedback] = useState(false);
+
   const tokenClient = useRef<any>(null);
 
   useEffect(() => {
@@ -49,6 +51,7 @@ const App: React.FC = () => {
               }
             },
           });
+          // Attempt sync on start if client id is present
           triggerSync();
         } catch (e) {
           console.error("GSI Init Error", e);
@@ -176,6 +179,12 @@ const App: React.FC = () => {
     });
   }, [transactions, filterCategory, filterSource, filterTime]);
 
+  const handleCopyId = () => {
+    navigator.clipboard.writeText(clientId);
+    setCopyFeedback(true);
+    setTimeout(() => setCopyFeedback(false), 2000);
+  };
+
   if (!isUnlocked) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white font-sans">
@@ -298,16 +307,27 @@ const App: React.FC = () => {
                     
                     {clientId ? (
                       <div className="space-y-4">
-                        <div className="bg-emerald-400/20 p-5 rounded-2xl border border-emerald-400/30 flex items-center gap-4">
-                           <div className="w-10 h-10 bg-emerald-400 rounded-xl flex items-center justify-center text-emerald-900 text-xl">✅</div>
+                        <div className={`p-5 rounded-2xl border flex items-center gap-4 transition-all ${syncStatus.isConnected ? 'bg-emerald-400/20 border-emerald-400/30' : 'bg-rose-400/20 border-rose-400/30'}`}>
+                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${syncStatus.isConnected ? 'bg-emerald-400 text-emerald-900' : 'bg-rose-400 text-rose-900'}`}>
+                             {syncStatus.isConnected ? '✅' : '❌'}
+                           </div>
                            <div>
-                             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Sync Activated</p>
-                             <p className="text-[8px] font-bold text-emerald-200/60 mt-0.5">Cloud Vault is operational</p>
+                             <p className="text-[10px] font-black uppercase tracking-widest text-white">
+                               {syncStatus.isConnected ? 'Vault Connected' : 'Authorization Needed'}
+                             </p>
+                             <p className="text-[8px] font-bold opacity-70 mt-0.5">
+                               {syncStatus.isConnected ? 'Your private cloud is active' : 'Click Sync to authorize'}
+                             </p>
                            </div>
                         </div>
-                        <div className="bg-white/10 p-4 rounded-xl border border-white/20 flex flex-col gap-1">
+                        <div className="bg-white/10 p-4 rounded-xl border border-white/20 flex flex-col gap-2">
                           <span className="text-[8px] font-black uppercase opacity-60">Active Client ID</span>
-                          <span className="text-[10px] font-mono break-all line-clamp-1">{clientId}</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-mono break-all line-clamp-1 flex-1">{clientId}</span>
+                            <button onClick={handleCopyId} className="p-2 hover:bg-white/10 rounded-lg transition-all active:scale-90">
+                              {copyFeedback ? '✅' : <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>}
+                            </button>
+                          </div>
                         </div>
                         <button 
                           onClick={triggerSync}
@@ -317,13 +337,13 @@ const App: React.FC = () => {
                           {syncStatus.isSyncing ? 'Synchronizing...' : 'Sync with Cloud Now'}
                         </button>
                         <div className="flex justify-center">
-                           <button onClick={() => { if(confirm('Delete ID?')) { setClientId(''); localStorage.removeItem(CLIENT_ID_KEY); setSyncStatus(p => ({ ...p, isConnected: false })); } }} className="text-[10px] font-bold text-indigo-200 hover:text-white transition-all underline">Remove & Update ID</button>
+                           <button onClick={() => { if(confirm('Delete ID?')) { setClientId(''); localStorage.removeItem(CLIENT_ID_KEY); setSyncStatus(p => ({ ...p, isConnected: false })); } }} className="text-[10px] font-bold text-indigo-200 hover:text-white transition-all underline">Use Different Client ID</button>
                         </div>
                       </div>
                     ) : (
                       <div className="space-y-6">
                         <div className="bg-indigo-700/50 p-5 rounded-2xl border border-white/10">
-                          <p className="text-[10px] font-black uppercase tracking-widest mb-3">Paste Client ID here:</p>
+                          <p className="text-[10px] font-black uppercase tracking-widest mb-3">Paste Your Client ID here:</p>
                           <input 
                             type="text" 
                             placeholder="...apps.googleusercontent.com" 
@@ -335,43 +355,50 @@ const App: React.FC = () => {
                               }
                             }}
                           />
-                          <p className="text-[8px] mt-3 opacity-60 text-center font-bold uppercase tracking-widest">Press Enter to save</p>
+                          <p className="text-[8px] mt-3 opacity-60 text-center font-bold uppercase tracking-widest">Anyone can use their own ID to start syncing</p>
                         </div>
                       </div>
                     )}
                   </div>
 
                   <div className="space-y-4">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Troubleshooting (Error 403)</h4>
-                    <div className="bg-rose-50 border border-rose-100 p-6 rounded-[2rem] space-y-3">
-                       <p className="text-[11px] font-black text-rose-600 uppercase tracking-widest flex items-center gap-2">
-                         <span className="text-lg">🚨</span> Access Blocked / 403 Error?
-                       </p>
-                       <p className="text-[11px] text-rose-500 leading-relaxed font-semibold">
-                         গুগল ক্লাউড বর্তমানে **"Testing"** মোডে আছে। এটি সমাধান করতে:
-                       </p>
-                       <div className="space-y-2">
-                         <div className="flex gap-3 items-start">
-                           <div className="w-5 h-5 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center text-[10px] font-black shrink-0">১</div>
-                           <p className="text-[10px] text-rose-600 font-bold">Google Cloud Console-এ **"Audience"** ট্যাবে যান।</p>
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Shared Cloud Concept</h4>
+                    <div className="bg-slate-50 border border-slate-200 p-6 rounded-[2rem] space-y-4">
+                       <div className="flex gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-lg shrink-0 border border-indigo-100">🌍</div>
+                         <div>
+                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">Anyone Can Use</p>
+                            <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                              যে কেউ তার নিজের Client ID এখানে বসিয়ে অ্যাপটি নিজের মতো করে ব্যবহার করতে পারবেন।
+                            </p>
                          </div>
-                         <div className="flex gap-3 items-start">
-                           <div className="w-5 h-5 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center text-[10px] font-black shrink-0">২</div>
-                           <p className="text-[10px] text-rose-600 font-bold">**"Test users"** সেকশনে গিয়ে **"+ ADD USERS"** ক্লিক করুন।</p>
+                       </div>
+                       <div className="flex gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-lg shrink-0 border border-emerald-100">🔒</div>
+                         <div>
+                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">Private Storage</p>
+                            <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                              প্রতিটি Client ID এর ডেটা আলাদা ড্রাইভে থাকে, তাই আপনার ডেটা অন্য কেউ দেখতে পাবে না।
+                            </p>
                          </div>
-                         <div className="flex gap-3 items-start">
-                           <div className="w-5 h-5 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center text-[10px] font-black shrink-0">৩</div>
-                           <p className="text-[10px] text-rose-600 font-bold">আপনার নিজের জিমেইল অ্যাড্রেসটি যোগ করে সেভ দিন।</p>
+                       </div>
+                       <div className="flex gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-lg shrink-0 border border-amber-100">🏗️</div>
+                         <div>
+                            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-1">How to setup?</p>
+                            <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                              গুগল ক্লাউড কনসোলে গিয়ে একটি নতুন প্রজেক্ট খুলে Client ID জেনারেট করে এখানে দিলেই হবে।
+                            </p>
                          </div>
                        </div>
                     </div>
                   </div>
 
-                  {clientId && (
-                     <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100 text-center">
+                  {clientId && syncStatus.isConnected && (
+                     <div className="p-8 bg-indigo-50 rounded-[2rem] border border-indigo-100 text-center shadow-inner">
                         <div className="text-4xl mb-4">✨</div>
-                        <h4 className="text-sm font-black text-slate-900 mb-2 uppercase tracking-widest">অভিনন্দন!</h4>
-                        <p className="text-[11px] text-slate-500 font-medium leading-relaxed italic">আপনার সেটআপ সম্পন্ন হয়েছে। এখন নির্ভয়ে আপনার খরচ ট্র্যাক করুন।</p>
+                        <h4 className="text-sm font-black text-indigo-900 mb-2 uppercase tracking-widest">Multi-User Ready!</h4>
+                        <p className="text-[11px] text-indigo-600 font-medium leading-relaxed italic px-4">আপনার ব্যক্তিগত ক্লাউড এখন এই অ্যাপের সাথে যুক্ত।</p>
                      </div>
                   )}
                 </div>
