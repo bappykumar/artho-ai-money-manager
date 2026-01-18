@@ -2,8 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, AIResponse, SpendingInsight } from "../types";
 
-// Always use the API key from process.env.API_KEY directly as per guidelines.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
 const EXTRACTION_PROMPT = `
 You are a financial AI agent. Your task is to extract transaction details from the user's natural language input (Bangla or English).
@@ -48,7 +47,9 @@ export const extractTransaction = async (input: string): Promise<AIResponse | nu
       }
     });
 
-    const result = JSON.parse(response.text.trim());
+    const text = response.text;
+    if (!text) return null;
+    const result = JSON.parse(text.trim());
     return result;
   } catch (error) {
     console.error("Gemini Extraction Error:", error);
@@ -93,7 +94,9 @@ export const generateInsights = async (transactions: Transaction[]): Promise<Spe
       }
     });
 
-    return JSON.parse(response.text.trim());
+    const text = response.text;
+    if (!text) return [];
+    return JSON.parse(text.trim());
   } catch (error) {
     console.error("Gemini Insights Error:", error);
     return [];
