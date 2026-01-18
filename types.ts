@@ -29,7 +29,9 @@ export interface SpendingInsight {
   type: 'warning' | 'info' | 'positive';
 }
 
-export interface AppState {
-  transactions: Transaction[];
-  balance: number;
+export interface SyncState {
+  isConnected: boolean;
+  isSyncing: boolean;
+  lastSync: string | null;
+  error: string | null;
 }
