@@ -1,0 +1,5 @@
+{
+  "name": "Artho - Personal AI Money Manager",
+  "description": "A conversation-first financial tracker that uses AI to automatically categorize and manage your expenses from natural language inputs.",
+  "requestFramePermissions": []
+}
