@@ -341,24 +341,31 @@ const App: React.FC = () => {
                     )}
                   </div>
 
-                  {!clientId && (
-                    <div className="space-y-4">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Setup Guide</h4>
-                      <div className="space-y-3">
-                        {[
-                          { step: '!', text: '⚠️ জিমেইলে অবশ্যই 2-Step Verification অন থাকতে হবে।', color: 'bg-rose-50 text-rose-600 border-rose-100' },
-                          { step: '১', text: 'আপনার কপি করা Client ID-টি উপরের বক্সে বসান।', color: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
-                          { step: '২', text: 'কিবোর্ড থেকে এন্টার (Enter) চাপুন।', color: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
-                          { step: '৩', text: 'একটি পপ-আপ আসলে আপনার জিমেইল সিলেক্ট করে অনুমতি দিন।', color: 'bg-indigo-50 text-indigo-600 border-indigo-100' }
-                        ].map((s, idx) => (
-                          <div key={idx} className={`flex gap-4 p-4 rounded-2xl border transition-all hover:bg-white ${s.color}`}>
-                            <div className="w-8 h-8 rounded-xl bg-white/50 flex items-center justify-center text-[11px] font-black shrink-0 border border-current opacity-70">{s.step}</div>
-                            <p className="text-[11px] font-semibold leading-tight flex items-center">{s.text}</p>
-                          </div>
-                        ))}
-                      </div>
+                  <div className="space-y-4">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Troubleshooting (Error 403)</h4>
+                    <div className="bg-rose-50 border border-rose-100 p-6 rounded-[2rem] space-y-3">
+                       <p className="text-[11px] font-black text-rose-600 uppercase tracking-widest flex items-center gap-2">
+                         <span className="text-lg">🚨</span> Access Blocked / 403 Error?
+                       </p>
+                       <p className="text-[11px] text-rose-500 leading-relaxed font-semibold">
+                         গুগল ক্লাউড বর্তমানে **"Testing"** মোডে আছে। এটি সমাধান করতে:
+                       </p>
+                       <div className="space-y-2">
+                         <div className="flex gap-3 items-start">
+                           <div className="w-5 h-5 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center text-[10px] font-black shrink-0">১</div>
+                           <p className="text-[10px] text-rose-600 font-bold">Google Cloud Console-এ **"Audience"** ট্যাবে যান।</p>
+                         </div>
+                         <div className="flex gap-3 items-start">
+                           <div className="w-5 h-5 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center text-[10px] font-black shrink-0">২</div>
+                           <p className="text-[10px] text-rose-600 font-bold">**"Test users"** সেকশনে গিয়ে **"+ ADD USERS"** ক্লিক করুন।</p>
+                         </div>
+                         <div className="flex gap-3 items-start">
+                           <div className="w-5 h-5 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center text-[10px] font-black shrink-0">৩</div>
+                           <p className="text-[10px] text-rose-600 font-bold">আপনার নিজের জিমেইল অ্যাড্রেসটি যোগ করে সেভ দিন।</p>
+                         </div>
+                       </div>
                     </div>
-                  )}
+                  </div>
 
                   {clientId && (
                      <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100 text-center">
