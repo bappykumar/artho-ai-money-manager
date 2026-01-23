@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Transaction, Category, SyncState, Account, SpendingInsight } from './types';
 import { extractTransactions, generateInsights } from './services/geminiService';
@@ -8,12 +7,27 @@ import AIChatInput from './components/AIChatInput';
 import SyncManager from './components/SyncManager';
 import Toast, { ToastMessage } from './components/Toast';
 
+// Fix for missing Vite types
+declare global {
+  interface ImportMetaEnv {
+    readonly VITE_GOOGLE_CLIENT_ID: string;
+    readonly [key: string]: any;
+  }
+
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
+}
+
 const STORAGE_KEY = 'artho_finance_v4_data';
 const ACCOUNTS_KEY = 'artho_accounts_v4';
 const SYNC_KEY = 'artho_sync_state';
 const MUTATION_KEY = 'artho_last_mutation';
 const UNLOCKED_KEY = 'artho_session_unlocked';
 const DEFAULT_PIN = '0000';
+
+// Configuration: Get Client ID from environment variables safely
+const GOOGLE_CLIENT_ID = (import.meta.env && import.meta.env.VITE_GOOGLE_CLIENT_ID) || '';
 
 const DEFAULT_ACCOUNTS: Account[] = [
   { id: '1', name: 'BRAC BANK', icon: '🏦', color: '#005DAA' },
@@ -197,9 +211,15 @@ const App: React.FC = () => {
   };
 
   const handleGoogleConnect = useCallback(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      addToast("Setup required: Add VITE_GOOGLE_CLIENT_ID to .env", "warning");
+      console.warn("Google Client ID is missing. Create one at https://console.cloud.google.com and add it to your .env file as VITE_GOOGLE_CLIENT_ID.");
+      return;
+    }
+
     try {
       const client = (window as any).google.accounts.oauth2.initTokenClient({
-        client_id: '674314050201-kps5j9q69v7ofn0o271pno0b0k4q4sh8.apps.googleusercontent.com',
+        client_id: GOOGLE_CLIENT_ID,
         scope: 'https://www.googleapis.com/auth/drive.file',
         callback: async (response: any) => {
           if (response.access_token) {
@@ -254,7 +274,9 @@ const App: React.FC = () => {
     setIsLoading(true);
     try {
       const results = await extractTransactions(input, accounts.map(a => a.name));
-      if (results?.length > 0) {
+      if (results === null) {
+        addToast("AI Quota limit reached. Please try again later.", "error");
+      } else if (results.length > 0) {
         const newEntries: Transaction[] = results.map(r => ({
           id: crypto.randomUUID(),
           amount: r.amount,

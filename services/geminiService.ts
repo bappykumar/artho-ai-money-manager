@@ -4,7 +4,7 @@ import { Transaction, AIResponse, SpendingInsight } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const extractTransactions = async (input: string, activeAccounts: string[]): Promise<AIResponse[]> => {
+export const extractTransactions = async (input: string, activeAccounts: string[]): Promise<AIResponse[] | null> => {
   const EXTRACTION_PROMPT = `
 You are Artho-AI, a smart financial assistant for Bangladeshis. 
 Identify every single financial event (expenses, income, lending) mentioned in the text.
@@ -49,7 +49,22 @@ Return an ARRAY of objects.
 
     const results = JSON.parse(text.trim());
     return Array.isArray(results) ? results : [results];
-  } catch (error) {
+  } catch (error: any) {
+    const errorMessage = error.message || JSON.stringify(error);
+    // Check for various forms of quota/resource exhausted errors
+    const isQuota = 
+      error.status === 429 || 
+      error.response?.status === 429 ||
+      error.error?.code === 429 ||
+      errorMessage.includes('429') || 
+      errorMessage.toLowerCase().includes('quota') || 
+      errorMessage.includes('RESOURCE_EXHAUSTED');
+
+    if (isQuota) {
+      console.warn("Gemini API Quota Exceeded during transaction extraction.");
+      return null; // Return null to signal specific quota error to UI
+    }
+
     console.error("AI Extraction Error:", error);
     return [];
   }
@@ -164,10 +179,18 @@ Return as JSON array.
 
     return JSON.parse(text.trim());
   } catch (error: any) {
-    // If quota exceeded (429) or other error, fallback to local logic
-    const isQuotaError = error.status === 429 || error.message?.includes('429') || error.message?.includes('quota');
+    const errorMessage = error.message || JSON.stringify(error);
+    // Robust check for quota errors to avoid console spam
+    const isQuotaError = 
+        error.status === 429 || 
+        error.response?.status === 429 ||
+        error.error?.code === 429 || 
+        errorMessage.includes('429') || 
+        errorMessage.toLowerCase().includes('quota') || 
+        errorMessage.includes('RESOURCE_EXHAUSTED');
+
     if (isQuotaError) {
-      console.warn("Gemini API Quota Exceeded. Using local fallback insights.");
+      console.warn("Gemini API Quota Exceeded for insights. Using local fallback.");
     } else {
       console.error("AI Insight Error (using fallback):", error);
     }
