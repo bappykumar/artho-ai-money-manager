@@ -68,7 +68,52 @@ export const generateInsights = async (transactions: Transaction[]): Promise<Spe
   });
 
   const currentBalance = totalIncome - totalExpense;
-  const topCategory = Object.entries(categoryTotals).sort((a,b) => b[1] - a[1])[0]?.[0] || 'N/A';
+  const sortedCategories = Object.entries(categoryTotals).sort((a,b) => b[1] - a[1]);
+  const topCategory = sortedCategories[0]?.[0] || 'N/A';
+  const topCategoryAmount = sortedCategories[0]?.[1] || 0;
+
+  // Local Fallback Logic: Generates insights deterministically without AI
+  const getFallbackInsights = (): SpendingInsight[] => {
+    const insights: SpendingInsight[] = [];
+    
+    // Insight 1: Financial Health
+    if (currentBalance < 0) {
+        insights.push({
+            title: "সতর্কতা: নেতিবাচক ব্যালেন্স",
+            message: `আপনার খরচের পরিমাণ আয় থেকে বেশি। অপ্রয়োজনীয় খরচ কমিয়ে আনুন।`,
+            type: "warning"
+        });
+    } else if (totalExpense > totalIncome * 0.8 && totalIncome > 0) {
+        insights.push({
+            title: "বাজেট সতর্কতা",
+            message: `আপনি আপনার আয়ের ৮০% এর বেশি খরচ করে ফেলেছেন। সঞ্চয়ের দিকে মনোযোগ দিন।`,
+            type: "warning"
+        });
+    } else {
+        insights.push({
+            title: "আর্থিক অবস্থা",
+            message: `আপনার আর্থিক অবস্থা স্থিতিশীল। হাতে জমা আছে ৳${currentBalance.toLocaleString()}।`,
+            type: "positive"
+        });
+    }
+
+    // Insight 2: Top Spending Category
+    if (topCategory !== 'N/A') {
+        insights.push({
+            title: "সর্বোচ্চ খরচ",
+            message: `এই মাসে ${topCategory} খাতে সর্বোচ্চ ৳${topCategoryAmount.toLocaleString()} খরচ হয়েছে।`,
+            type: "info"
+        });
+    } else {
+        insights.push({
+            title: "বিনিয়োগ পরামর্শ",
+            message: "ভবিষ্যতের জন্য নিয়মিত অল্প করে হলেও সঞ্চয় শুরু করুন।",
+            type: "info"
+        });
+    }
+
+    return insights;
+  };
 
   const contextStr = `
 Balance: ৳${currentBalance}
@@ -111,8 +156,14 @@ Return as JSON array.
       }
     });
     return JSON.parse(response.text.trim());
-  } catch (error) {
-    console.error("AI Insight Error:", error);
-    return [];
+  } catch (error: any) {
+    // If quota exceeded (429) or other error, fallback to local logic
+    const isQuotaError = error.status === 429 || error.message?.includes('429') || error.message?.includes('quota');
+    if (isQuotaError) {
+      console.warn("Gemini API Quota Exceeded. Using local fallback insights.");
+    } else {
+      console.error("AI Insight Error (using fallback):", error);
+    }
+    return getFallbackInsights();
   }
 };

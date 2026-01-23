@@ -244,6 +244,12 @@ const App: React.FC = () => {
     }
   };
 
+  const lockApp = () => {
+    setIsUnlocked(false);
+    sessionStorage.removeItem(UNLOCKED_KEY);
+    setPinInput('');
+  };
+
   const handleProcessInput = async (input: string) => {
     setIsLoading(true);
     try {
@@ -299,26 +305,29 @@ const App: React.FC = () => {
       </div>
 
       <div className="max-w-6xl mx-auto px-10">
-        <header className="py-12 flex items-center justify-between">
-          <div className="flex items-center gap-5">
-            <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-3xl shadow-2xl transition-transform hover:rotate-3">A</div>
+        <header className="py-10 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black text-xl shadow-lg hover:rotate-6 transition-transform">A</div>
             <div>
-                <h1 className="text-3xl font-black tracking-tighter text-slate-900">Artho</h1>
-                <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${syncState.isConnected ? 'bg-emerald-400' : 'bg-slate-300'}`}></div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        {syncState.isConnected ? 'Cloud Protected' : 'Local Only'}
+                <h1 className="text-2xl font-black tracking-tighter text-slate-900 leading-none">Artho</h1>
+                <div className="flex items-center gap-2 mt-1">
+                    <div className={`w-1.5 h-1.5 rounded-full ${syncState.isConnected ? 'bg-emerald-400' : 'bg-slate-300'}`}></div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                        {syncState.isConnected ? 'Sync Active' : 'Sync Offline'}
                     </p>
                 </div>
             </div>
           </div>
-          <div className="flex gap-4">
-             <button onClick={() => setShowSync(true)} className="w-14 h-14 bg-white rounded-full shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all active:scale-90 relative">
-               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
-               {syncState.isConnected && <div className="absolute top-3 right-3 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />}
+          <div className="flex items-center gap-3">
+             <button onClick={() => setShowSync(true)} className="w-10 h-10 bg-white rounded-full border border-slate-200 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-100 transition-all shadow-sm active:scale-90 relative" title="Cloud Sync">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
+                {syncState.isConnected && <div className="absolute top-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />}
              </button>
-             <button onClick={() => setShowHistory(true)} className="w-14 h-14 bg-white rounded-full shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all active:scale-90">
-               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+             <button onClick={() => setShowHistory(true)} className="w-10 h-10 bg-white rounded-full border border-slate-200 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-100 transition-all shadow-sm active:scale-90" title="History">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+             </button>
+             <button onClick={lockApp} className="w-10 h-10 bg-[#121826] rounded-full border border-[#121826] flex items-center justify-center text-white hover:bg-slate-800 transition-all shadow-sm active:scale-90" title="Lock App">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
              </button>
           </div>
         </header>
