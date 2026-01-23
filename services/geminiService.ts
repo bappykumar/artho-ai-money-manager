@@ -44,7 +44,10 @@ Return an ARRAY of objects.
       }
     });
 
-    const results = JSON.parse(response.text.trim());
+    const text = response.text;
+    if (!text) return [];
+
+    const results = JSON.parse(text.trim());
     return Array.isArray(results) ? results : [results];
   } catch (error) {
     console.error("AI Extraction Error:", error);
@@ -155,7 +158,11 @@ Return as JSON array.
         }
       }
     });
-    return JSON.parse(response.text.trim());
+    
+    const text = response.text;
+    if (!text) throw new Error("No text generated from AI");
+
+    return JSON.parse(text.trim());
   } catch (error: any) {
     // If quota exceeded (429) or other error, fallback to local logic
     const isQuotaError = error.status === 429 || error.message?.includes('429') || error.message?.includes('quota');
